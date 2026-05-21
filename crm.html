@@ -41,6 +41,8 @@
   header.topbar button{background:rgba(0,0,0,.05);border:none;color:var(--ink);padding:7px 14px;border-radius:980px;cursor:pointer;font-size:12.5px;font-weight:500;white-space:nowrap;transition:background .15s,transform .1s}
   header.topbar button:hover{background:rgba(0,0,0,.09)}
   header.topbar button:active{transform:scale(.96)}
+  header.topbar #undoBtn{background:rgba(255,159,10,.16);color:#9a5400}
+  header.topbar #undoBtn:hover{background:rgba(255,159,10,.28)}
   #syncDot{width:9px;height:9px;border-radius:50%;display:inline-block;background:#9ca3af;flex-shrink:0;transition:background .2s,box-shadow .2s;cursor:default}
   #syncDot[data-state="ok"]{background:#34c759;box-shadow:0 0 0 3px rgba(52,199,89,.18)}
   #syncDot[data-state="saving"]{background:#ff9f0a;animation:syncPulse 1s ease-in-out infinite}
@@ -279,6 +281,7 @@
   <button onclick="exportExcel()">📊 Excel</button>
   <button onclick="exportData()">⬇ Respaldar</button>
   <button onclick="document.getElementById('importFile').click()">⬆ Importar</button>
+  <button id="undoBtn" onclick="undo()" style="display:none" title="Deshacer última acción">↶ Deshacer</button>
   <span id="syncDot" data-state="offline" title="Sin nube · datos locales" aria-label="Estado de sincronización"></span>
   <button onclick="openSettings()">🔒 Seguridad</button>
   <button onclick="logout()" title="Cerrar sesión">🚪 Salir</button>
@@ -336,6 +339,7 @@
       <button class="btn green" onclick="openStudentModal()">+ Nuevo alumno</button>
       <button class="btn ghost" onclick="document.getElementById('csvFile').click()">⬆ Importar CSV</button>
       <button class="btn ghost" onclick="plantillaCSV()">Plantilla CSV</button>
+      <button class="btn danger" onclick="delAllStudents()" title="Borrar todos los alumnos">🗑 Borrar todos</button>
       <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none" onchange="importStudentsCSV(event)">
       <input id="aSearch" placeholder="Buscar alumno…" style="max-width:260px" oninput="renderStudents()">
       <div class="spacer"></div><span class="muted" id="aCount"></span>
@@ -645,6 +649,34 @@ function applyBrand(){ const s=logoSrc(); ["brandLogo","lockLogo","settingsLogo"
 function uploadLogo(ev){ const f=ev.target.files[0]; if(!f)return; if(f.size>4000000){toast("Imagen muy grande (máx 4 MB)");return;} const r=new FileReader(); r.onload=()=>{resizeDataURL(r.result,384,(d)=>{state.logo=d;save();applyBrand();toast("Logo aplicado ✓");});}; r.readAsDataURL(f); ev.target.value=""; }
 function removeLogo(){ state.logo=""; save(); applyBrand(); toast("Se restableció el logo provisional"); }
 function save(){ localStorage.setItem(KEY,JSON.stringify(state)); if(window.__supabase) scheduleCloudSave(); else if(CLOUD) saveCloud(); }
+/* ============ UNDO ============ */
+let __undoStack=[];
+function snapshot(label){
+  try{ __undoStack.push({label, state: JSON.parse(JSON.stringify(state)), ts: Date.now()}); }catch(e){ return; }
+  if(__undoStack.length>10) __undoStack.shift();
+  updateUndoButton();
+}
+function undo(){
+  if(!__undoStack.length){ toast("No hay nada que deshacer"); return; }
+  const last=__undoStack[__undoStack.length-1];
+  if(!confirm(`¿Deshacer "${last.label}"? Se restaurará el estado anterior.`)) return;
+  __undoStack.pop();
+  Object.keys(state).forEach(k=>delete state[k]);
+  Object.assign(state, migrate(last.state));
+  save();
+  applyBrand();
+  const v=document.querySelector("#nav a.active")?.dataset.v||"dash";
+  renderView(v);
+  toast("Deshecho: "+last.label);
+  updateUndoButton();
+}
+function updateUndoButton(){
+  const btn=document.getElementById("undoBtn"); if(!btn) return;
+  if(__undoStack.length){
+    const last=__undoStack[__undoStack.length-1];
+    btn.style.display="inline-flex"; btn.title="Deshacer: "+last.label;
+  } else { btn.style.display="none"; }
+}
 let __cloudTimer=null,__cloudSyncing=false;
 function setSyncIndicator(s){const el=document.getElementById("syncDot");if(!el)return;el.dataset.state=s;el.title=({ok:"Sincronizado con la nube",saving:"Guardando en la nube…",error:"Error al sincronizar — revisa conexión",offline:"Sin nube · datos locales"})[s]||"";}
 function scheduleCloudSave(){setSyncIndicator("saving");clearTimeout(__cloudTimer);__cloudTimer=setTimeout(cloudSavePush,700);}
@@ -757,7 +789,7 @@ function saveCourse(){
 }
 function editCourse(id){const c=course(id);editCourseId=id;document.getElementById("cNombre").value=c.nombre;document.getElementById("cDia").value=c.dia;document.getElementById("cInicio").value=c.inicio;document.getElementById("cSesiones").value=c.sesiones;document.getElementById("cCosto").value=c.costo;document.getElementById("cursoFormTitle").textContent="Editar curso: "+c.nombre;document.getElementById("cCancel").style.display="inline-block";window.scrollTo({top:0,behavior:"smooth"});}
 function resetCourseForm(){editCourseId=null;document.getElementById("cNombre").value="";document.getElementById("cInicio").value="";document.getElementById("cSesiones").value=18;document.getElementById("cCosto").value=200;document.getElementById("cDia").value=0;document.getElementById("cursoFormTitle").textContent="Nuevo curso";document.getElementById("cCancel").style.display="none";}
-function delCourse(id){const en=enrollOf(id).length;if(!confirm("¿Eliminar este curso?"+(en?` Tiene ${en} alumno(s) inscritos que también se quitarán.`:"")))return;state.courses=state.courses.filter(c=>c.id!==id);state.enroll=state.enroll.filter(e=>e.courseId!==id);save();renderCourses();toast("Curso eliminado");}
+function delCourse(id){const c=course(id);const en=enrollOf(id).length;if(!confirm("¿Eliminar este curso?"+(en?` Tiene ${en} alumno(s) inscritos que también se quitarán.`:"")))return;snapshot("Eliminar curso: "+(c?.nombre||"sin nombre"));state.courses=state.courses.filter(c=>c.id!==id);state.enroll=state.enroll.filter(e=>e.courseId!==id);save();renderCourses();toast("Curso eliminado · puedes deshacer arriba");}
 const COVER_GRAD=["linear-gradient(135deg,#0b6f82,#16b3cc)","linear-gradient(135deg,#7b341e,#e3ad33)","linear-gradient(135deg,#1e3a5f,#3b82f6)","linear-gradient(135deg,#4c1d95,#a855f7)","linear-gradient(135deg,#7c2d12,#f97316)","linear-gradient(135deg,#064e3b,#34c759)","linear-gradient(135deg,#831843,#ec4899)","linear-gradient(135deg,#0f766e,#2dd4bf)","linear-gradient(135deg,#92400e,#fbbf24)","linear-gradient(135deg,#1e293b,#64748b)","linear-gradient(135deg,#3730a3,#818cf8)","linear-gradient(135deg,#9d174d,#fb7185)"];
 function renderCourses(){
   const sorted=[...state.courses].sort((a,b)=>{const ia=LEVELS.indexOf(a.nombre),ib=LEVELS.indexOf(b.nombre);return (ia<0?999:ia)-(ib<0?999:ib);});
@@ -807,7 +839,18 @@ function saveStudent(){
   save();closeModal("studentModal");renderStudents();
 }
 function editStudent(id){openStudentModal(id);}
-function delStudent(id){if(!confirm("¿Eliminar al alumno y todas sus inscripciones?"))return;state.students=state.students.filter(s=>s.id!==id);state.enroll=state.enroll.filter(e=>e.studentId!==id);save();renderStudents();toast("Alumno eliminado");}
+function delStudent(id){const s=student(id);if(!confirm("¿Eliminar al alumno y todas sus inscripciones?"))return;snapshot("Eliminar alumno: "+(s?.nombre||"sin nombre"));state.students=state.students.filter(s=>s.id!==id);state.enroll=state.enroll.filter(e=>e.studentId!==id);save();renderStudents();toast("Alumno eliminado · puedes deshacer arriba");}
+function delAllStudents(){
+  if(!state.students.length){toast("No hay alumnos que borrar");return;}
+  const n=state.students.length;
+  if(!confirm(`¿Borrar TODOS los ${n} alumnos y sus inscripciones/pagos/asistencias?\n\nEsta acción se puede deshacer con el botón ↶ Deshacer.`))return;
+  const txt=prompt(`Para confirmar, escribe BORRAR ${n}`);
+  if(txt!==`BORRAR ${n}`){toast("Cancelado");return;}
+  snapshot(`Borrar todos los alumnos (${n})`);
+  state.students=[];state.enroll=[];
+  save();renderStudents();
+  toast(`${n} alumno(s) eliminados · puedes deshacer arriba`);
+}
 function renderStudents(){
   const q=(document.getElementById("aSearch").value||"").toLowerCase();
   const list=state.students.filter(s=>s.nombre.toLowerCase().includes(q));
@@ -825,10 +868,13 @@ function importStudentsCSV(ev){const f=ev.target.files[0];if(!f)return;const r=n
   try{const rows=parseCSV(r.result).filter(x=>x.some(c=>c.trim()!==""));if(!rows.length)throw 0;
     const head=rows[0].map(h=>h.trim().toLowerCase());const idx=n=>head.findIndex(h=>n.some(x=>h.includes(x)));
     const iN=idx(["nombre"]),iT=idx(["tel","whats","celular","movil"]),iM=idx(["correo","mail","email"]),iNac=idx(["nac","fecha"]),iC=idx(["congre","celula","célula"]),iMin=idx(["minist"]),iD=idx(["direc","domic"]),iB=idx(["biom","huella","idbio"]);
-    let n=0;rows.slice(1).forEach(c=>{const nombre=(c[iN]||"").trim();if(!nombre)return;
-      state.students.push({id:uid(),creado:todayISO(),notas:[],nombre,tel:(iT>=0?c[iT]:"").trim(),mail:(iM>=0?c[iM]:"").trim(),nacimiento:(iNac>=0?c[iNac]:"").trim(),congregacion:(iC>=0?c[iC]:"").trim(),ministerio:(iMin>=0?c[iMin]:"").trim(),direccion:(iD>=0?c[iD]:"").trim(),bioId:(iB>=0?c[iB]:"").trim(),emgN:"",emgT:"",foto:""});n++;});
     if(iN<0){toast("El CSV debe tener una columna 'Nombre'");return;}
-    save();renderStudents();toast(n+" alumno(s) importados ✓");
+    const dataRows=rows.slice(1).filter(c=>(c[iN]||"").trim());
+    if(!dataRows.length){toast("El CSV no tiene filas con nombre");return;}
+    snapshot(`Importar CSV (${dataRows.length} alumnos)`);
+    let n=0;dataRows.forEach(c=>{const nombre=(c[iN]||"").trim();
+      state.students.push({id:uid(),creado:todayISO(),notas:[],nombre,tel:(iT>=0?c[iT]:"").trim(),mail:(iM>=0?c[iM]:"").trim(),nacimiento:(iNac>=0?c[iNac]:"").trim(),congregacion:(iC>=0?c[iC]:"").trim(),ministerio:(iMin>=0?c[iMin]:"").trim(),direccion:(iD>=0?c[iD]:"").trim(),bioId:(iB>=0?c[iB]:"").trim(),emgN:"",emgT:"",foto:""});n++;});
+    save();renderStudents();toast(n+" alumno(s) importados · puedes deshacer arriba");
   }catch(e){toast("No se pudo leer el CSV");}
 };r.readAsText(f);ev.target.value="";}
 
