@@ -521,7 +521,8 @@
       <div><button class="btn ghost sm" onclick="document.getElementById('stuFotoFile').click()">Subir foto</button> <button class="btn ghost sm" onclick="clearStuFoto()">Quitar</button><input type="file" id="stuFotoFile" accept="image/*" style="display:none" onchange="stuFotoUpload(event)"></div>
     </div>
     <div class="row">
-      <div style="flex:2"><label>Nombre completo</label><input id="aNombre" placeholder="Nombre y apellidos"></div>
+      <div><label>Nombre(s)</label><input id="aNombre" placeholder="Ej. Juan Carlos"></div>
+      <div><label>Apellido(s)</label><input id="aApellido" placeholder="Ej. Pérez García"></div>
       <div><label>WhatsApp / Teléfono</label><input id="aTel" placeholder="Ej. 8112345678"></div>
     </div>
     <div class="row">
@@ -822,13 +823,23 @@ function uploadPortada(ev){const f=ev.target.files[0];if(!f||!portadaTarget)retu
 let stuFotoData="";
 const NOFOTO="data:image/svg+xml,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#e8eaed"/><circle cx="32" cy="25" r="12" fill="#b9c0c8"/><path d="M12 58c0-12 9-18 20-18s20 6 20 18z" fill="#b9c0c8"/></svg>');
 function fotoSrc(s){return (s&&s.foto)?s.foto:NOFOTO;}
+function splitFullName(full){
+  const t=(full||"").trim(); if(!t) return {nombre:"",apellido:""};
+  const parts=t.split(/\s+/);
+  if(parts.length===1) return {nombre:parts[0],apellido:""};
+  if(parts.length===2) return {nombre:parts[0],apellido:parts[1]};
+  return {nombre:parts.slice(0,parts.length-2).join(" "),apellido:parts.slice(-2).join(" ")};
+}
 function openStudentModal(id){
   closeModal("boletaModal");
   editStudentId=id||null;
   const s=id?student(id):null;
   document.getElementById("studentModalTitle").textContent=s?"Editar ficha del alumno":"Nuevo alumno";
   const set=(el,v)=>document.getElementById(el).value=v||"";
-  set("aNombre",s?.nombre);set("aTel",s?.tel);set("aMail",s?.mail);set("aNac",s?.nacimiento);set("aCong",s?.congregacion);set("aMin",s?.ministerio);set("aDir",s?.direccion);set("aEmgN",s?.emgN);set("aEmgT",s?.emgT);set("aBio",s?.bioId);
+  let firstName=s?.nombre||"", lastName=s?.apellido||"";
+  if(s && !s.apellido){ const sp=splitFullName(s.nombre); firstName=sp.nombre; lastName=sp.apellido; }
+  set("aNombre",firstName);set("aApellido",lastName);
+  set("aTel",s?.tel);set("aMail",s?.mail);set("aNac",s?.nacimiento);set("aCong",s?.congregacion);set("aMin",s?.ministerio);set("aDir",s?.direccion);set("aEmgN",s?.emgN);set("aEmgT",s?.emgT);set("aBio",s?.bioId);
   stuFotoData=s?.foto||"";
   document.getElementById("stuFoto").src=fotoSrc(s);
   document.getElementById("studentModal").classList.add("show");
@@ -838,7 +849,9 @@ function clearStuFoto(){stuFotoData="";document.getElementById("stuFoto").src=NO
 function saveStudent(){
   const g=el=>document.getElementById(el).value.trim();
   const nombre=g("aNombre");if(!nombre){toast("Escribe el nombre");return;}
-  const data={nombre,tel:g("aTel"),mail:g("aMail"),nacimiento:document.getElementById("aNac").value,congregacion:g("aCong"),ministerio:g("aMin"),direccion:g("aDir"),emgN:g("aEmgN"),emgT:g("aEmgT"),bioId:g("aBio"),foto:stuFotoData};
+  const apellido=g("aApellido");
+  const fullName=(nombre+" "+apellido).trim();
+  const data={nombre:fullName,apellido,tel:g("aTel"),mail:g("aMail"),nacimiento:document.getElementById("aNac").value,congregacion:g("aCong"),ministerio:g("aMin"),direccion:g("aDir"),emgN:g("aEmgN"),emgT:g("aEmgT"),bioId:g("aBio"),foto:stuFotoData};
   if(editStudentId){Object.assign(student(editStudentId),data);toast("Ficha actualizada");}
   else{state.students.push(Object.assign({id:uid(),creado:todayISO(),notas:[]},data));toast("Alumno agregado");}
   save();closeModal("studentModal");renderStudents();
@@ -895,17 +908,20 @@ function renderStudents(){
 }
 /* ---- importar CSV ---- */
 function parseCSV(txt){const rows=[];let i=0,f="",row=[],q=false;txt=txt.replace(/\r\n/g,"\n").replace(/\r/g,"\n");while(i<txt.length){const ch=txt[i];if(q){if(ch==='"'){if(txt[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else{if(ch==='"')q=true;else if(ch===','){row.push(f);f="";}else if(ch==='\n'){row.push(f);rows.push(row);row=[];f="";}else f+=ch;}i++;}if(f!==""||row.length){row.push(f);rows.push(row);}return rows;}
-function plantillaCSV(){downloadCSV("plantilla-alumnos.csv","Nombre,Telefono,Correo,Nacimiento,Congregacion,Ministerio,Direccion,IDBiometrico\nJuan Pérez García,8112345678,juan@correo.com,2000-05-12,Célula Norte,Alabanza,Calle 1 #23,1024\n");toast("Plantilla descargada");}
+function plantillaCSV(){downloadCSV("plantilla-alumnos.csv","Nombre,Apellido,Telefono,Correo,Nacimiento,Congregacion,Ministerio,Direccion,IDBiometrico\nJuan Carlos,Pérez García,8112345678,juan@correo.com,2000-05-12,Célula Norte,Alabanza,Calle 1 #23,1024\n");toast("Plantilla descargada");}
 function importStudentsCSV(ev){const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{
   try{const rows=parseCSV(r.result).filter(x=>x.some(c=>c.trim()!==""));if(!rows.length)throw 0;
     const head=rows[0].map(h=>h.trim().toLowerCase());const idx=n=>head.findIndex(h=>n.some(x=>h.includes(x)));
-    const iN=idx(["nombre"]),iT=idx(["tel","whats","celular","movil"]),iM=idx(["correo","mail","email"]),iNac=idx(["nac","fecha"]),iC=idx(["congre","celula","célula"]),iMin=idx(["minist"]),iD=idx(["direc","domic"]),iB=idx(["biom","huella","idbio"]);
+    const iN=idx(["nombre"]),iA=idx(["apellid"]),iT=idx(["tel","whats","celular","movil"]),iM=idx(["correo","mail","email"]),iNac=idx(["nac","fecha"]),iC=idx(["congre","celula","célula"]),iMin=idx(["minist"]),iD=idx(["direc","domic"]),iB=idx(["biom","huella","idbio"]);
     if(iN<0){toast("El CSV debe tener una columna 'Nombre'");return;}
     const dataRows=rows.slice(1).filter(c=>(c[iN]||"").trim());
     if(!dataRows.length){toast("El CSV no tiene filas con nombre");return;}
     snapshot(`Importar CSV (${dataRows.length} alumnos)`);
-    let n=0;dataRows.forEach(c=>{const nombre=(c[iN]||"").trim();
-      state.students.push({id:uid(),creado:todayISO(),notas:[],nombre,tel:(iT>=0?c[iT]:"").trim(),mail:(iM>=0?c[iM]:"").trim(),nacimiento:(iNac>=0?c[iNac]:"").trim(),congregacion:(iC>=0?c[iC]:"").trim(),ministerio:(iMin>=0?c[iMin]:"").trim(),direccion:(iD>=0?c[iD]:"").trim(),bioId:(iB>=0?c[iB]:"").trim(),emgN:"",emgT:"",foto:""});n++;});
+    let n=0;dataRows.forEach(c=>{
+      const firstName=(c[iN]||"").trim();
+      const apellido=iA>=0?(c[iA]||"").trim():"";
+      const fullName=(firstName+" "+apellido).trim();
+      state.students.push({id:uid(),creado:todayISO(),notas:[],nombre:fullName,apellido,tel:(iT>=0?c[iT]:"").trim(),mail:(iM>=0?c[iM]:"").trim(),nacimiento:(iNac>=0?c[iNac]:"").trim(),congregacion:(iC>=0?c[iC]:"").trim(),ministerio:(iMin>=0?c[iMin]:"").trim(),direccion:(iD>=0?c[iD]:"").trim(),bioId:(iB>=0?c[iB]:"").trim(),emgN:"",emgT:"",foto:""});n++;});
     save();renderStudents();toast(n+" alumno(s) importados · puedes deshacer arriba");
   }catch(e){toast("No se pudo leer el CSV");}
 };r.readAsText(f);ev.target.value="";}
