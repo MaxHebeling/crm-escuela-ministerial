@@ -190,11 +190,22 @@
   else {
     window.__supabase = supabase;
     window.__sessionUser = session.user;
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, role, email")
+      .eq("id", session.user.id)
+      .maybeSingle();
+    window.__profile = profile || {
+      full_name: session.user.user_metadata?.full_name || session.user.email,
+      email: session.user.email,
+      role: null
+    };
     window.logout = async () => {
       await supabase.auth.signOut();
       location.replace("/");
     };
     document.documentElement.style.visibility = "visible";
+    document.dispatchEvent(new Event("auth:ready"));
   }
 </script>
 </head>
@@ -601,7 +612,18 @@ service cloud.firestore {
 
 <script>
 /* ============ ESTADO ============ */
-const LEVELS=["Fundamentos","LBS","Visión","Casa de Paz","Poder del Servicio","La Honra","Mentores","Empoderando Discípulos","Discipulado Profético","Evangelismo","Carácter de Cristo","AJP"];
+const LEVELS=["Fundamentos","LBS","Visión","Casa de Paz","Poder del Servicio","La Honra","Discipulado Profético","Mentores","Empoderando Discípulos","Carácter de Cristo","Evangelismo","AJP"];
+const COVERS={
+  "Fundamentos":"covers/fundamentos.jpg",
+  "LBS":"covers/lbs.jpg",
+  "Visión":"covers/vision.jpg",
+  "Casa de Paz":"covers/casa-de-paz.jpg",
+  "Poder del Servicio":"covers/poder-del-servicio.jpg",
+  "La Honra":"covers/la-honra.jpg",
+  "Discipulado Profético":"covers/discipulado-profetico.jpg",
+  "Mentores":"covers/mentores.jpg",
+  "Carácter de Cristo":"covers/caracter-de-cristo.jpg"
+};
 const DAYS=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 const KEY="crm_escuela_ministerial_v2";
 const APROBA=70;
@@ -671,10 +693,22 @@ function renderView(v){
 }
 
 /* ============ DASHBOARD ============ */
+function adminName(){ const p=window.__profile; if(p&&p.full_name) return p.full_name; const u=window.__sessionUser; return (u&&(u.user_metadata?.full_name||u.email))||""; }
+function updateHeroClock(){
+  const hd=document.getElementById("heroDate"); if(!hd) return;
+  const now=new Date();
+  const fecha=now.toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  const hora=now.toLocaleTimeString("es-MX",{hour:"numeric",minute:"2-digit",hour12:true});
+  hd.textContent=fecha+" · "+hora;
+}
+if(!window.__heroClock){ window.__heroClock=setInterval(updateHeroClock,15000); }
 function renderDash(){
-  const hd=document.getElementById("heroDate");if(hd)hd.textContent=new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
-  const ht=document.getElementById("heroTitle");if(ht)ht.innerHTML=state.escuelaNombre?esc(state.escuelaNombre):"Escuela Ministerial<br>Fuente de Vida";
-  const hu=document.getElementById("heroUser");if(hu)hu.textContent=(CLOUD&&currentUser)?("Hola, "+userName()):"Panel de administración · asistencia, pagos y reportes.";
+  updateHeroClock();
+  const nombre=adminName();
+  const ht=document.getElementById("heroTitle");
+  if(ht) ht.innerHTML = nombre ? ("Hola, "+esc(nombre)) : (state.escuelaNombre?esc(state.escuelaNombre):"Escuela Ministerial<br>Fuente de Vida");
+  const hu=document.getElementById("heroUser");
+  if(hu) hu.textContent = state.escuelaNombre ? state.escuelaNombre : "Escuela Ministerial · Fuente de Vida";
   // cumpleaños de hoy
   const n=new Date();const mm=n.getMonth()+1,dd=n.getDate();
   const cumple=state.students.filter(s=>{if(!s.nacimiento)return false;const p=s.nacimiento.split("-");return +p[1]===mm&&+p[2]===dd;});
@@ -710,10 +744,12 @@ function resetCourseForm(){editCourseId=null;document.getElementById("cNombre").
 function delCourse(id){const en=enrollOf(id).length;if(!confirm("¿Eliminar este curso?"+(en?` Tiene ${en} alumno(s) inscritos que también se quitarán.`:"")))return;state.courses=state.courses.filter(c=>c.id!==id);state.enroll=state.enroll.filter(e=>e.courseId!==id);save();renderCourses();toast("Curso eliminado");}
 const COVER_GRAD=["linear-gradient(135deg,#0b6f82,#16b3cc)","linear-gradient(135deg,#7b341e,#e3ad33)","linear-gradient(135deg,#1e3a5f,#3b82f6)","linear-gradient(135deg,#4c1d95,#a855f7)","linear-gradient(135deg,#7c2d12,#f97316)","linear-gradient(135deg,#064e3b,#34c759)","linear-gradient(135deg,#831843,#ec4899)","linear-gradient(135deg,#0f766e,#2dd4bf)","linear-gradient(135deg,#92400e,#fbbf24)","linear-gradient(135deg,#1e293b,#64748b)","linear-gradient(135deg,#3730a3,#818cf8)","linear-gradient(135deg,#9d174d,#fb7185)"];
 function renderCourses(){
-  const cards=state.courses.map((c,i)=>{
+  const sorted=[...state.courses].sort((a,b)=>{const ia=LEVELS.indexOf(a.nombre),ib=LEVELS.indexOf(b.nombre);return (ia<0?999:ia)-(ib<0?999:ib);});
+  const cards=sorted.map((c,i)=>{
     const per=c.fechas.length?`${fmtShort(c.fechas[0])} → ${fmtShort(c.fechas[c.fechas.length-1])}`:"Sin periodo";
     const al=enrollOf(c.id).length;
-    const cover=c.portada?`<img class="cover" src="${c.portada}">`:`<div class="cover" style="background:${COVER_GRAD[i%COVER_GRAD.length]}"></div><div class="ph">📖</div>`;
+    const defCover=COVERS[c.nombre];
+    const cover=c.portada?`<img class="cover" src="${c.portada}">`:(defCover?`<img class="cover" src="${defCover}">`:`<div class="cover" style="background:${COVER_GRAD[i%COVER_GRAD.length]}"></div><div class="ph">📖</div>`);
     return `<div class="ncard" onclick="editCourse('${c.id}')" title="Editar ${esc(c.nombre)}">
       ${cover}<div class="grad"></div>
       <span class="tag">${c.fechas.length?c.fechas.length+" sesiones":"nuevo"}</span>
