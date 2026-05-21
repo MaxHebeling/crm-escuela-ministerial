@@ -445,42 +445,6 @@
       </ol>
       <p class="hint">Nota: la conexión necesita internet y caduca a la hora; vuelve a tocar "Conectar" si expira. Si abres el archivo con doble clic (file://) la conexión no funcionará: debe ser desde la dirección http://localhost:8000.</p>
     </div>
-    <div class="card">
-      <h2 style="margin-top:0">☁️ Modo nube multi-escuela (Firebase) — configuración</h2>
-      <p class="sub" style="margin-bottom:10px">Para que varias escuelas usen el sistema, cada una con su login y datos aislados. Una sola vez.</p>
-      <ol style="line-height:1.7;padding-left:20px;margin:0">
-        <li>Entra a <b>console.firebase.google.com</b> y crea un proyecto.</li>
-        <li><b>Compilación → Authentication → Comenzar</b>. Activa los proveedores <b>Correo electrónico/contraseña</b> y <b>Google</b>.</li>
-        <li><b>Compilación → Firestore Database → Crear base de datos</b> (modo producción, región cercana).</li>
-        <li>En Firestore, pestaña <b>Reglas</b>, pega las reglas de abajo y <b>Publica</b>.</li>
-        <li>En <b>Configuración del proyecto (engrane) → Tus apps → Web (&lt;/&gt;)</b>, registra una app y copia el objeto <code>firebaseConfig</code>.</li>
-        <li>Abre el CRM, ve a <b>🔒 Seguridad → Modo nube</b>, pega ese objeto y toca <b>Activar nube</b>.</li>
-        <li>Reinicia y verás la pantalla de inicio de sesión. El primer usuario crea la escuela; luego invita a tu equipo por correo desde Seguridad.</li>
-      </ol>
-      <p class="hint" style="margin-top:10px">Reglas de seguridad de Firestore (cópialas tal cual):</p>
-      <textarea readonly rows="13" style="font-family:monospace;font-size:11.5px" onclick="this.select()">rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function myEmail(){ return request.auth.token.email.lower(); }
-    function myTenant(){ return get(/databases/$(database)/documents/userIndex/$(myEmail())).data.tenantId; }
-    match /userIndex/{email} {
-      allow read: if request.auth != null && myEmail() == email;
-      allow create: if request.auth != null && ( myEmail() == email
-        || get(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId)).data.ownerEmail == myEmail() );
-      allow update, delete: if request.auth != null
-        && get(/databases/$(database)/documents/tenants/$(resource.data.tenantId)).data.ownerEmail == myEmail();
-    }
-    match /tenants/{tid} {
-      allow create: if request.auth != null && request.resource.data.ownerEmail == myEmail();
-      allow read, update: if request.auth != null && myTenant() == tid;
-      match /app/{doc} {
-        allow read, write: if request.auth != null && myTenant() == tid;
-      }
-    }
-  }
-}</textarea>
-      <p class="hint">Costo: el plan gratuito de Firebase alcanza de sobra para pocas escuelas. Para que entren desde otros dispositivos (no solo localhost), más adelante se publica con Firebase Hosting.</p>
-    </div>
   </section>
 </main>
 </div><!-- /content -->
