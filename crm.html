@@ -11,9 +11,9 @@
 <meta property="og:site_name" content="Escuela Ministerial Fuente de Vida">
 <meta property="og:title" content="Escuela Ministerial Fuente de Vida · CRM">
 <meta property="og:description" content="Plataforma de la Escuela Ministerial · Ministerio Internacional Fuente de Vida.">
-<meta property="og:url" content="https://crm-escuela-ministerial.vercel.app/crm.html">
-<meta property="og:image" content="https://crm-escuela-ministerial.vercel.app/og.jpg">
-<meta property="og:image:secure_url" content="https://crm-escuela-ministerial.vercel.app/og.jpg">
+<meta property="og:url" content="https://www.crm-escmin.org/crm.html">
+<meta property="og:image" content="https://www.crm-escmin.org/og.jpg">
+<meta property="og:image:secure_url" content="https://www.crm-escmin.org/og.jpg">
 <meta property="og:image:type" content="image/jpeg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -22,7 +22,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Escuela Ministerial Fuente de Vida · CRM">
 <meta name="twitter:description" content="Plataforma de la Escuela Ministerial · Ministerio Internacional Fuente de Vida.">
-<meta name="twitter:image" content="https://crm-escuela-ministerial.vercel.app/og.jpg">
+<meta name="twitter:image" content="https://www.crm-escmin.org/og.jpg">
 <meta name="twitter:image:alt" content="Escudo de la Escuela Ministerial Fuente de Vida">
 <meta name="theme-color" content="#0a9cb8">
 <style>
@@ -44,6 +44,11 @@
   header.topbar #undoBtn{background:rgba(255,159,10,.16);color:#9a5400}
   header.topbar #undoBtn:hover{background:rgba(255,159,10,.28)}
   #syncDot{width:9px;height:9px;border-radius:50%;display:inline-block;background:#9ca3af;flex-shrink:0;transition:background .2s,box-shadow .2s;cursor:default}
+  #bootLoader{position:fixed;inset:0;background:#f5f5f7;z-index:1000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity .3s,visibility .3s;font-family:inherit;visibility:visible !important}
+  #bootLoader.hide{opacity:0;visibility:hidden;pointer-events:none}
+  #bootLoader .spin{width:34px;height:34px;border-radius:50%;border:3px solid rgba(10,156,184,.18);border-top-color:var(--teal);animation:bspin .9s linear infinite}
+  #bootLoader .lbl{font-size:13.5px;color:var(--muted);font-weight:500;letter-spacing:.02em}
+  @keyframes bspin{to{transform:rotate(360deg)}}
   #syncDot[data-state="ok"]{background:#34c759;box-shadow:0 0 0 3px rgba(52,199,89,.18)}
   #syncDot[data-state="saving"]{background:#ff9f0a;animation:syncPulse 1s ease-in-out infinite}
   #syncDot[data-state="error"]{background:#ff3b30;box-shadow:0 0 0 3px rgba(255,59,48,.2)}
@@ -254,6 +259,7 @@
 </script>
 </head>
 <body>
+<div id="bootLoader"><div class="spin"></div><div class="lbl">Cargando datos…</div></div>
 <script src="https://apis.google.com/js/api.js" async defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -696,7 +702,31 @@ function updateUndoButton(){
     btn.style.display="inline-flex"; btn.title="Deshacer: "+last.label;
   } else { btn.style.display="none"; }
 }
-let __cloudTimer=null,__cloudSyncing=false;
+let __cloudTimer=null,__cloudSyncing=false,__realtimeChannel=null;
+function subscribeRealtimeState(){
+  if(!window.__supabase || __realtimeChannel) return;
+  __realtimeChannel = window.__supabase
+    .channel("app_state_changes")
+    .on("postgres_changes",{event:"UPDATE",schema:"public",table:"app_state",filter:"id=eq.main"},(payload)=>{
+      const incoming = payload?.new;
+      if(!incoming || !incoming.data) return;
+      // Ignore echoes of our own save
+      if(incoming.updated_by === window.__sessionUser?.id) return;
+      const incomingTs = incoming.updated_at ? new Date(incoming.updated_at).getTime() : Date.now();
+      const localTs = parseInt(localStorage.getItem(KEY_TS)||"0",10);
+      if(incomingTs <= localTs) return;
+      Object.keys(state).forEach(k=>delete state[k]);
+      Object.assign(state, migrate(incoming.data));
+      localStorage.setItem(KEY, JSON.stringify(state));
+      localStorage.setItem(KEY_TS, String(incomingTs));
+      applyBrand();
+      const v=document.querySelector("#nav a.active")?.dataset.v||"dash";
+      renderView(v);
+      toast("🔄 Cambios sincronizados de otro admin");
+    })
+    .subscribe();
+}
+function hideBootLoader(){ const el=document.getElementById("bootLoader"); if(el) el.classList.add("hide"); }
 function setSyncIndicator(s){const el=document.getElementById("syncDot");if(!el)return;el.dataset.state=s;el.title=({ok:"Sincronizado con la nube",saving:"Guardando en la nube…",error:"Error al sincronizar — revisa conexión",offline:"Sin nube · datos locales"})[s]||"";}
 function scheduleCloudSave(){setSyncIndicator("saving");clearTimeout(__cloudTimer);__cloudTimer=setTimeout(cloudSavePush,700);}
 async function cloudSavePush(){
@@ -864,7 +894,33 @@ function openStudentModal(id){
   document.getElementById("stuFoto").src=fotoSrc(s);
   document.getElementById("studentModal").classList.add("show");
 }
-function stuFotoUpload(ev){const f=ev.target.files[0];if(!f)return;if(f.size>5000000){toast("Imagen muy grande (máx 5 MB)");return;}const r=new FileReader();r.onload=()=>{resizeDataURL(r.result,256,(d)=>{stuFotoData=d;document.getElementById("stuFoto").src=d;});};r.readAsDataURL(f);ev.target.value="";}
+function dataURLtoBlob(dataURL){const arr=dataURL.split(",");const m=arr[0].match(/:(.*?);/);const mime=m?m[1]:"image/png";const bstr=atob(arr[1]);const u8=new Uint8Array(bstr.length);for(let i=0;i<bstr.length;i++)u8[i]=bstr.charCodeAt(i);return new Blob([u8],{type:mime});}
+async function uploadPhotoToStorage(dataURL,who){
+  if(!window.__supabase) return null;
+  try{
+    const blob=dataURLtoBlob(dataURL);
+    const ext=(blob.type.split("/")[1]||"jpg").replace("jpeg","jpg");
+    const path=`${who||"student"}-${Date.now()}-${uid()}.${ext}`;
+    const { error } = await window.__supabase.storage.from("student-photos").upload(path,blob,{contentType:blob.type,upsert:true});
+    if(error) throw error;
+    const { data:{ publicUrl } } = window.__supabase.storage.from("student-photos").getPublicUrl(path);
+    return publicUrl;
+  }catch(e){ console.error("photo upload:",e); toast("⚠ Falló subir foto: "+e.message); return null; }
+}
+function stuFotoUpload(ev){
+  const f=ev.target.files[0];if(!f)return;
+  if(f.size>5000000){toast("Imagen muy grande (máx 5 MB)");return;}
+  const r=new FileReader();
+  r.onload=()=>{ resizeDataURL(r.result,384,async (resized)=>{
+    document.getElementById("stuFoto").src=resized;
+    if(window.__supabase){
+      const url=await uploadPhotoToStorage(resized, editStudentId||"new");
+      stuFotoData = url || resized;
+      if(url) document.getElementById("stuFoto").src=url;
+    } else { stuFotoData=resized; }
+  }); };
+  r.readAsDataURL(f);ev.target.value="";
+}
 function clearStuFoto(){stuFotoData="";document.getElementById("stuFoto").src=NOFOTO;}
 function saveStudent(){
   const g=el=>document.getElementById(el).value.trim();
@@ -1450,6 +1506,19 @@ function tryUnlock(){if(document.getElementById("lockPin").value===state.pin){do
 /* ============ PRINT HEADER ============ */
 function printHeader(sub){return `<div style="text-align:center;margin-bottom:14px"><img src="${logoSrc()}" style="height:78px"><div style="font-weight:700;font-size:18px">${SCHOOL}</div>${sub?`<div style="color:#555">${sub}</div>`:""}</div>`;}
 
+async function migrateBase64Photos(){
+  if(!window.__supabase) return;
+  const legacy=(state.students||[]).filter(s=>s.foto && typeof s.foto==="string" && s.foto.startsWith("data:image/"));
+  if(!legacy.length) return;
+  console.log(`Migrando ${legacy.length} foto(s) a Storage…`);
+  let ok=0,fail=0;
+  for(const s of legacy){
+    const url=await uploadPhotoToStorage(s.foto,s.id);
+    if(url){ s.foto=url; ok++; } else fail++;
+  }
+  if(ok){ save(); renderStudents(); toast(`Fotos migradas a la nube: ${ok}${fail?` · falló ${fail}`:""}`); }
+}
+
 /* ============ INIT ============ */
 document.addEventListener("auth:ready",async ()=>{
   const localTs=parseInt(localStorage.getItem(KEY_TS)||"0",10);
@@ -1469,6 +1538,9 @@ document.addEventListener("auth:ready",async ()=>{
     setSyncIndicator("offline");
   }
   if(document.getElementById("v-dash")?.classList.contains("active")) renderDash();
+  hideBootLoader();
+  setTimeout(()=>migrateBase64Photos(),1500);
+  subscribeRealtimeState();
 });
 if(fbConfig() && typeof firebase!=="undefined"){
   startCloud();
