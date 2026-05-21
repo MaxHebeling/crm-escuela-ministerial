@@ -1300,6 +1300,7 @@ function tryUnlock(){if(document.getElementById("lockPin").value===state.pin){do
 function printHeader(sub){return `<div style="text-align:center;margin-bottom:14px"><img src="${logoSrc()}" style="height:78px"><div style="font-weight:700;font-size:18px">${SCHOOL}</div>${sub?`<div style="color:#555">${sub}</div>`:""}</div>`;}
 
 /* ============ INIT ============ */
+document.addEventListener("auth:ready",()=>{ if(document.getElementById("v-dash")?.classList.contains("active")) renderDash(); });
 if(fbConfig() && typeof firebase!=="undefined"){
   startCloud();
 }else{
