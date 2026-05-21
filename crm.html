@@ -41,6 +41,11 @@
   header.topbar button{background:rgba(0,0,0,.05);border:none;color:var(--ink);padding:7px 14px;border-radius:980px;cursor:pointer;font-size:12.5px;font-weight:500;white-space:nowrap;transition:background .15s,transform .1s}
   header.topbar button:hover{background:rgba(0,0,0,.09)}
   header.topbar button:active{transform:scale(.96)}
+  #syncDot{width:9px;height:9px;border-radius:50%;display:inline-block;background:#9ca3af;flex-shrink:0;transition:background .2s,box-shadow .2s;cursor:default}
+  #syncDot[data-state="ok"]{background:#34c759;box-shadow:0 0 0 3px rgba(52,199,89,.18)}
+  #syncDot[data-state="saving"]{background:#ff9f0a;animation:syncPulse 1s ease-in-out infinite}
+  #syncDot[data-state="error"]{background:#ff3b30;box-shadow:0 0 0 3px rgba(255,59,48,.2)}
+  @keyframes syncPulse{0%,100%{opacity:1}50%{opacity:.45}}
   /* global search */
   .gsearch{position:relative;min-width:200px}
   .gsearch input{padding:8px 14px;border-radius:980px;border:none;width:230px;font-size:13px;background:rgba(0,0,0,.05);transition:.15s}
@@ -224,6 +229,13 @@
       email: session.user.email,
       role: null
     };
+    const { data: appRow } = await supabase
+      .from("app_state")
+      .select("data, updated_at")
+      .eq("id", "main")
+      .maybeSingle();
+    window.__cloudState = (appRow && appRow.data && Object.keys(appRow.data).length) ? appRow.data : null;
+    window.__cloudLoadedAt = appRow?.updated_at || null;
     window.logout = async () => {
       await supabase.auth.signOut();
       location.replace("/");
@@ -267,6 +279,7 @@
   <button onclick="exportExcel()">📊 Excel</button>
   <button onclick="exportData()">⬇ Respaldar</button>
   <button onclick="document.getElementById('importFile').click()">⬆ Importar</button>
+  <span id="syncDot" data-state="offline" title="Sin nube · datos locales" aria-label="Estado de sincronización"></span>
   <button onclick="openSettings()">🔒 Seguridad</button>
   <button onclick="logout()" title="Cerrar sesión">🚪 Salir</button>
   <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importData(event)">
@@ -631,7 +644,22 @@ function logoSrc(){ return state.logo||DEFAULT_LOGO; }
 function applyBrand(){ const s=logoSrc(); ["brandLogo","lockLogo","settingsLogo","heroLogo"].forEach(id=>{const el=document.getElementById(id);if(el)el.src=s;}); }
 function uploadLogo(ev){ const f=ev.target.files[0]; if(!f)return; if(f.size>4000000){toast("Imagen muy grande (máx 4 MB)");return;} const r=new FileReader(); r.onload=()=>{resizeDataURL(r.result,384,(d)=>{state.logo=d;save();applyBrand();toast("Logo aplicado ✓");});}; r.readAsDataURL(f); ev.target.value=""; }
 function removeLogo(){ state.logo=""; save(); applyBrand(); toast("Se restableció el logo provisional"); }
-function save(){ if(CLOUD){ saveCloud(); } else { localStorage.setItem(KEY,JSON.stringify(state)); } }
+function save(){ localStorage.setItem(KEY,JSON.stringify(state)); if(window.__supabase) scheduleCloudSave(); else if(CLOUD) saveCloud(); }
+let __cloudTimer=null,__cloudSyncing=false;
+function setSyncIndicator(s){const el=document.getElementById("syncDot");if(!el)return;el.dataset.state=s;el.title=({ok:"Sincronizado con la nube",saving:"Guardando en la nube…",error:"Error al sincronizar — revisa conexión",offline:"Sin nube · datos locales"})[s]||"";}
+function scheduleCloudSave(){setSyncIndicator("saving");clearTimeout(__cloudTimer);__cloudTimer=setTimeout(cloudSavePush,700);}
+async function cloudSavePush(){
+  if(__cloudSyncing||!window.__supabase) return;
+  __cloudSyncing=true;
+  try{
+    const { error } = await window.__supabase
+      .from("app_state")
+      .upsert({ id:"main", data: state, updated_at: new Date().toISOString(), updated_by: window.__sessionUser?.id });
+    if(error){ setSyncIndicator("error"); console.error("cloud save:",error); }
+    else setSyncIndicator("ok");
+  }catch(e){ setSyncIndicator("error"); console.error(e); }
+  finally{ __cloudSyncing=false; }
+}
 function uid(){ return Math.random().toString(36).slice(2,10); }
 /* redimensiona imágenes para que pesen poco (clave en modo nube) */
 function resizeDataURL(dataURL,max,cb){const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>h){if(w>max){h=Math.round(h*max/w);w=max;}}else{if(h>max){w=Math.round(w*max/h);h=max;}}const cv=document.createElement("canvas");cv.width=w;cv.height=h;cv.getContext("2d").drawImage(img,0,0,w,h);cb(cv.toDataURL("image/png"));};img.onerror=()=>cb(dataURL);img.src=dataURL;}
@@ -1287,7 +1315,22 @@ function tryUnlock(){if(document.getElementById("lockPin").value===state.pin){do
 function printHeader(sub){return `<div style="text-align:center;margin-bottom:14px"><img src="${logoSrc()}" style="height:78px"><div style="font-weight:700;font-size:18px">${SCHOOL}</div>${sub?`<div style="color:#555">${sub}</div>`:""}</div>`;}
 
 /* ============ INIT ============ */
-document.addEventListener("auth:ready",()=>{ if(document.getElementById("v-dash")?.classList.contains("active")) renderDash(); });
+document.addEventListener("auth:ready",async ()=>{
+  if(window.__cloudState){
+    Object.keys(state).forEach(k=>delete state[k]);
+    Object.assign(state, migrate(window.__cloudState));
+    applyBrand();
+    const v=document.querySelector("#nav a.active")?.dataset.v||"dash";
+    renderView(v);
+    setSyncIndicator("ok");
+  } else if(window.__supabase){
+    setSyncIndicator("saving");
+    await cloudSavePush();
+  } else {
+    setSyncIndicator("offline");
+  }
+  if(document.getElementById("v-dash")?.classList.contains("active")) renderDash();
+});
 if(fbConfig() && typeof firebase!=="undefined"){
   startCloud();
 }else{
