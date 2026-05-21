@@ -660,7 +660,14 @@ function logoSrc(){ return state.logo||DEFAULT_LOGO; }
 function applyBrand(){ const s=logoSrc(); ["brandLogo","lockLogo","settingsLogo","heroLogo"].forEach(id=>{const el=document.getElementById(id);if(el)el.src=s;}); }
 function uploadLogo(ev){ const f=ev.target.files[0]; if(!f)return; if(f.size>4000000){toast("Imagen muy grande (máx 4 MB)");return;} const r=new FileReader(); r.onload=()=>{resizeDataURL(r.result,384,(d)=>{state.logo=d;save();applyBrand();toast("Logo aplicado ✓");});}; r.readAsDataURL(f); ev.target.value=""; }
 function removeLogo(){ state.logo=""; save(); applyBrand(); toast("Se restableció el logo provisional"); }
-function save(){ localStorage.setItem(KEY,JSON.stringify(state)); if(window.__supabase) scheduleCloudSave(); else if(CLOUD) saveCloud(); }
+const KEY_TS=KEY+":ts";
+function save(){
+  const ts=Date.now();
+  try{ localStorage.setItem(KEY,JSON.stringify(state)); localStorage.setItem(KEY_TS,String(ts)); }
+  catch(e){ toast("⚠ Almacenamiento local lleno: "+e.message); console.error("localStorage save:",e); }
+  window.__localUpdatedAt=ts;
+  if(window.__supabase) scheduleCloudSave(); else if(CLOUD) saveCloud();
+}
 /* ============ UNDO ============ */
 let __undoStack=[];
 function snapshot(label){
@@ -696,12 +703,19 @@ async function cloudSavePush(){
   if(__cloudSyncing||!window.__supabase) return;
   __cloudSyncing=true;
   try{
+    const upd=new Date().toISOString();
     const { error } = await window.__supabase
       .from("app_state")
-      .upsert({ id:"main", data: state, updated_at: new Date().toISOString(), updated_by: window.__sessionUser?.id });
-    if(error){ setSyncIndicator("error"); console.error("cloud save:",error); }
-    else setSyncIndicator("ok");
-  }catch(e){ setSyncIndicator("error"); console.error(e); }
+      .upsert({ id:"main", data: state, updated_at: upd, updated_by: window.__sessionUser?.id });
+    if(error){
+      setSyncIndicator("error");
+      console.error("cloud save:",error);
+      toast("⚠ Cambios guardados localmente · falló subir a la nube: "+(error.message||"error"));
+    } else {
+      setSyncIndicator("ok");
+      window.__cloudLastSavedAt=upd;
+    }
+  }catch(e){ setSyncIndicator("error"); console.error(e); toast("⚠ Sin conexión a la nube · cambios guardados local"); }
   finally{ __cloudSyncing=false; }
 }
 function uid(){ return Math.random().toString(36).slice(2,10); }
@@ -1438,7 +1452,10 @@ function printHeader(sub){return `<div style="text-align:center;margin-bottom:14
 
 /* ============ INIT ============ */
 document.addEventListener("auth:ready",async ()=>{
-  if(window.__cloudState){
+  const localTs=parseInt(localStorage.getItem(KEY_TS)||"0",10);
+  const cloudTs=window.__cloudLoadedAt?new Date(window.__cloudLoadedAt).getTime():0;
+  const cloudWins=window.__cloudState && cloudTs>localTs;
+  if(cloudWins){
     Object.keys(state).forEach(k=>delete state[k]);
     Object.assign(state, migrate(window.__cloudState));
     applyBrand();
