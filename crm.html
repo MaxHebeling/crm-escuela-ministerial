@@ -344,6 +344,11 @@
       <input id="aSearch" placeholder="Buscar alumno…" style="max-width:260px" oninput="renderStudents()">
       <div class="spacer"></div><span class="muted" id="aCount"></span>
     </div>
+    <div id="selBar" style="display:none;align-items:center;gap:12px;padding:10px 14px;margin-bottom:14px;background:rgba(10,156,184,.08);border:1px solid rgba(10,156,184,.22);border-radius:12px;font-size:13.5px">
+      <b id="selCount">0 seleccionado(s)</b>
+      <button class="btn danger sm" onclick="delSelectedStudents()">🗑 Borrar seleccionados</button>
+      <button class="btn ghost sm" onclick="clearStudentSel()">Limpiar selección</button>
+    </div>
     <div class="tablewrap"><table id="studentsTable"></table></div>
   </section>
 
@@ -851,15 +856,42 @@ function delAllStudents(){
   save();renderStudents();
   toast(`${n} alumno(s) eliminados · puedes deshacer arriba`);
 }
+const __selectedStudents=new Set();
+function toggleStudentSel(id,on){ if(on)__selectedStudents.add(id); else __selectedStudents.delete(id); updateSelBar(); }
+function toggleAllStudentsSel(on){
+  const q=(document.getElementById("aSearch").value||"").toLowerCase();
+  state.students.filter(s=>s.nombre.toLowerCase().includes(q)).forEach(s=>{ if(on)__selectedStudents.add(s.id); else __selectedStudents.delete(s.id); });
+  renderStudents();
+}
+function clearStudentSel(){ __selectedStudents.clear(); renderStudents(); }
+function updateSelBar(){
+  const n=__selectedStudents.size;
+  const bar=document.getElementById("selBar"); if(!bar) return;
+  bar.style.display=n?"flex":"none";
+  document.getElementById("selCount").textContent=n+" seleccionado(s)";
+}
+function delSelectedStudents(){
+  const n=__selectedStudents.size; if(!n){toast("Nada seleccionado");return;}
+  if(!confirm(`¿Borrar ${n} alumno(s) seleccionado(s) y sus inscripciones/pagos/asistencias?\n\nPuedes deshacer con ↶ Deshacer.`))return;
+  snapshot(`Borrar ${n} alumno(s) seleccionado(s)`);
+  state.students=state.students.filter(s=>!__selectedStudents.has(s.id));
+  state.enroll=state.enroll.filter(e=>!__selectedStudents.has(e.studentId));
+  __selectedStudents.clear();
+  save();renderStudents();
+  toast(`${n} alumno(s) eliminados · puedes deshacer arriba`);
+}
 function renderStudents(){
   const q=(document.getElementById("aSearch").value||"").toLowerCase();
   const list=state.students.filter(s=>s.nombre.toLowerCase().includes(q));
   document.getElementById("aCount").textContent=state.students.length+" alumno(s)";
+  updateSelBar();
   if(!state.students.length){document.getElementById("studentsTable").innerHTML=`<tbody><tr><td><div class="empty"><div class="big">👤</div>No hay alumnos todavía.<br><button class="btn sm" style="margin-top:10px" onclick="openStudentModal()">+ Nuevo alumno</button> o importa tu lista con <b>Importar CSV</b>.</div></td></tr></tbody>`;return;}
+  const allChecked = list.length>0 && list.every(s=>__selectedStudents.has(s.id));
   const rows=list.map(s=>{const ins=state.enroll.filter(e=>e.studentId===s.id).map(e=>`<span class="pill">${esc(course(e.courseId)?.nombre||"?")}</span>`).join(" ")||'<span class="muted">sin curso</span>';
     const wa=s.tel?`<button class="btn wa sm" onclick="waGeneric('${s.id}')">WA</button>`:"";
-    return `<tr><td><div style="display:flex;align-items:center;gap:10px"><img class="avatar sm" src="${fotoSrc(s)}"><a style="cursor:pointer;color:var(--teal);font-weight:600" onclick="openBoleta('${s.id}')">${esc(s.nombre)}</a></div></td><td>${esc(s.tel)||'<span class="muted">—</span>'}</td><td>${esc(s.congregacion)||'<span class="muted">—</span>'}</td><td>${ins}</td><td class="right" style="white-space:nowrap">${wa} <button class="btn ghost sm" onclick="openBoleta('${s.id}')">Boleta</button> <button class="btn ghost sm" onclick="editStudent('${s.id}')">Editar</button> <button class="btn danger sm" onclick="delStudent('${s.id}')">×</button></td></tr>`;}).join("");
-  document.getElementById("studentsTable").innerHTML=`<thead><tr><th>Nombre</th><th>Teléfono</th><th>Congregación</th><th>Inscrito en</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="5"><div class="empty">Sin resultados.</div></td></tr>'}</tbody>`;
+    const checked=__selectedStudents.has(s.id)?"checked":"";
+    return `<tr${checked?' style="background:rgba(10,156,184,.06)"':''}><td style="width:36px"><input type="checkbox" ${checked} onchange="toggleStudentSel('${s.id}',this.checked);this.closest('tr').style.background=this.checked?'rgba(10,156,184,.06)':''" style="width:17px;height:17px;cursor:pointer"></td><td><div style="display:flex;align-items:center;gap:10px"><img class="avatar sm" src="${fotoSrc(s)}"><a style="cursor:pointer;color:var(--teal);font-weight:600" onclick="openBoleta('${s.id}')">${esc(s.nombre)}</a></div></td><td>${esc(s.tel)||'<span class="muted">—</span>'}</td><td>${esc(s.congregacion)||'<span class="muted">—</span>'}</td><td>${ins}</td><td class="right" style="white-space:nowrap">${wa} <button class="btn ghost sm" onclick="openBoleta('${s.id}')">Boleta</button> <button class="btn ghost sm" onclick="editStudent('${s.id}')">Editar</button> <button class="btn danger sm" onclick="delStudent('${s.id}')">×</button></td></tr>`;}).join("");
+  document.getElementById("studentsTable").innerHTML=`<thead><tr><th style="width:36px"><input type="checkbox" ${allChecked?"checked":""} onchange="toggleAllStudentsSel(this.checked)" title="Seleccionar todos los visibles" style="width:17px;height:17px;cursor:pointer"></th><th>Nombre</th><th>Teléfono</th><th>Congregación</th><th>Inscrito en</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="6"><div class="empty">Sin resultados.</div></td></tr>'}</tbody>`;
 }
 /* ---- importar CSV ---- */
 function parseCSV(txt){const rows=[];let i=0,f="",row=[],q=false;txt=txt.replace(/\r\n/g,"\n").replace(/\r/g,"\n");while(i<txt.length){const ch=txt[i];if(q){if(ch==='"'){if(txt[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else{if(ch==='"')q=true;else if(ch===','){row.push(f);f="";}else if(ch==='\n'){row.push(f);rows.push(row);row=[];f="";}else f+=ch;}i++;}if(f!==""||row.length){row.push(f);rows.push(row);}return rows;}
