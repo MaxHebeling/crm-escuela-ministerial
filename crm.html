@@ -138,6 +138,12 @@
   .b-red{background:rgba(255,59,48,.13);color:#c4271f} .b-gray{background:rgba(0,0,0,.06);color:#6e6e73} .b-blue{background:rgba(10,132,255,.14);color:#0a6fd8}
   .pill{font-size:11.5px;padding:3px 10px;border-radius:980px;background:rgba(0,0,0,.06);color:#6e6e73;font-weight:500}
   .pill.on{background:var(--teal);color:#fff}
+  .enroll-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 4px 3px 10px;background:rgba(10,156,184,.12);color:#0b6f82;margin:1px 2px}
+  .enroll-pill button{background:rgba(0,0,0,.08);border:none;color:#5a5a5e;width:16px;height:16px;border-radius:50%;cursor:pointer;font-size:11px;line-height:1;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:.15s}
+  .enroll-pill button:hover{background:rgba(255,59,48,.85);color:#fff}
+  .enroll-add{font-size:11.5px;padding:3px 8px;border-radius:980px;border:1px dashed rgba(0,0,0,.18);background:transparent;color:#6e6e73;cursor:pointer;font-family:inherit;margin-left:2px}
+  .enroll-add:hover{border-color:var(--teal);color:var(--teal)}
+  .enroll-add:focus{outline:none;border-color:var(--teal);border-style:solid}
   .right{text-align:right} .center{text-align:center} .muted{color:var(--muted)}
   .empty{padding:40px;text-align:center;color:var(--muted)} .empty .big{font-size:38px;opacity:.35}
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.32);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:100;align-items:center;justify-content:center;padding:18px}
@@ -893,6 +899,21 @@ function delSelectedStudents(){
   save();renderStudents();
   toast(`${n} alumno(s) eliminados · puedes deshacer arriba`);
 }
+function enrollStudentIn(sid,cid){
+  if(!cid) return;
+  if(state.enroll.some(e=>e.studentId===sid && e.courseId===cid)){ toast("Ya está inscrito en ese curso"); return; }
+  state.enroll.push({id:uid(),studentId:sid,courseId:cid,att:{},pays:[],parcial:"",final:""});
+  save();renderStudents();
+  const c=course(cid); toast(`Inscrito en "${c?.nombre||"curso"}"`);
+}
+function unenrollStudent(sid,cid){
+  const c=course(cid);
+  if(!confirm(`¿Quitar la inscripción de este alumno en "${c?.nombre||"el curso"}"?\nSe borrarán sus asistencias y abonos del curso. Puedes deshacer con ↶.`))return;
+  snapshot(`Quitar inscripción de "${c?.nombre||""}"`);
+  state.enroll=state.enroll.filter(e=>!(e.studentId===sid&&e.courseId===cid));
+  save();renderStudents();
+  toast("Inscripción quitada · puedes deshacer arriba");
+}
 function renderStudents(){
   const q=(document.getElementById("aSearch").value||"").toLowerCase();
   const list=state.students.filter(s=>s.nombre.toLowerCase().includes(q));
@@ -900,7 +921,14 @@ function renderStudents(){
   updateSelBar();
   if(!state.students.length){document.getElementById("studentsTable").innerHTML=`<tbody><tr><td><div class="empty"><div class="big">👤</div>No hay alumnos todavía.<br><button class="btn sm" style="margin-top:10px" onclick="openStudentModal()">+ Nuevo alumno</button> o importa tu lista con <b>Importar CSV</b>.</div></td></tr></tbody>`;return;}
   const allChecked = list.length>0 && list.every(s=>__selectedStudents.has(s.id));
-  const rows=list.map(s=>{const ins=state.enroll.filter(e=>e.studentId===s.id).map(e=>`<span class="pill">${esc(course(e.courseId)?.nombre||"?")}</span>`).join(" ")||'<span class="muted">sin curso</span>';
+  const sortedCourses=[...state.courses].sort((a,b)=>{const ia=LEVELS.indexOf(a.nombre),ib=LEVELS.indexOf(b.nombre);return (ia<0?999:ia)-(ib<0?999:ib);});
+  const rows=list.map(s=>{
+    const enrolled=state.enroll.filter(e=>e.studentId===s.id);
+    const enrolledIds=new Set(enrolled.map(e=>e.courseId));
+    const pills=enrolled.map(e=>`<span class="pill enroll-pill"><span>${esc(course(e.courseId)?.nombre||"?")}</span><button onclick="event.stopPropagation();unenrollStudent('${s.id}','${e.courseId}')" title="Quitar de este curso" aria-label="Quitar">×</button></span>`).join(" ");
+    const avail=sortedCourses.filter(c=>!enrolledIds.has(c.id));
+    const dropdown=avail.length?`<select class="enroll-add" onchange="enrollStudentIn('${s.id}',this.value);this.value=''"><option value="">+ inscribir…</option>${avail.map(c=>`<option value="${c.id}">${esc(c.nombre)}</option>`).join("")}</select>`:'<span class="muted" style="font-size:11.5px">(en todos)</span>';
+    const ins=(pills||'<span class="muted">sin curso</span>')+" "+dropdown;
     const wa=s.tel?`<button class="btn wa sm" onclick="waGeneric('${s.id}')">WA</button>`:"";
     const checked=__selectedStudents.has(s.id)?"checked":"";
     return `<tr${checked?' style="background:rgba(10,156,184,.06)"':''}><td style="width:36px"><input type="checkbox" ${checked} onchange="toggleStudentSel('${s.id}',this.checked);this.closest('tr').style.background=this.checked?'rgba(10,156,184,.06)':''" style="width:17px;height:17px;cursor:pointer"></td><td><div style="display:flex;align-items:center;gap:10px"><img class="avatar sm" src="${fotoSrc(s)}"><a style="cursor:pointer;color:var(--teal);font-weight:600" onclick="openBoleta('${s.id}')">${esc(s.nombre)}</a></div></td><td>${esc(s.tel)||'<span class="muted">—</span>'}</td><td>${esc(s.congregacion)||'<span class="muted">—</span>'}</td><td>${ins}</td><td class="right" style="white-space:nowrap">${wa} <button class="btn ghost sm" onclick="openBoleta('${s.id}')">Boleta</button> <button class="btn ghost sm" onclick="editStudent('${s.id}')">Editar</button> <button class="btn danger sm" onclick="delStudent('${s.id}')">×</button></td></tr>`;}).join("");
